@@ -1,0 +1,201 @@
+---
+title: "sta314 final project"
+output: html_document
+date: "2024-11-13"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(readr)
+#install.packages("gridExtra")
+library(gridExtra)
+set.seed(888)
+train_data <- read_csv("train.csv")
+```
+
+## EDA
+
+```{r}
+summary(train_data)
+```
+
+
+```{r}
+#CardiovascularDisease, Diabetes, HeadInjury, Hypertension, SystolicBP, DiastolicBP, DoctorInCharge was not included.
+new_data <- train_data %>% select(PatientID, Age, Gender, Ethnicity, EducationLevel, BMI, Smoking, AlcoholConsumption, PhysicalActivity, DietQuality, SleepQuality, FamilyHistoryAlzheimers, Depression, CholesterolTotal, CholesterolLDL, MMSE, FunctionalAssessment, MemoryComplaints, BehavioralProblems, ADL, Confusion, Disorientation, PersonalityChanges, DifficultyCompletingTasks, Forgetfulness, Diagnosis)
+new_cleaned <- na.omit(new_data)
+summary(new_data)
+```
+
+(base on the summary above build a summary table)
+
+# Train Data visualization
+```{r}
+library(ggplot2)
+library(reshape2)
+#连续变量
+continuous_variables <- c("Age", "BMI", "AlcoholConsumption",
+                          "PhysicalActivity", 
+                          "DietQuality", "SleepQuality", "CholesterolTotal",
+                          "CholesterolLDL", "MMSE", "FunctionalAssessment",
+                          "ADL")
+train_data_long <- melt(new_data, measure.vars = continuous_variables)
+
+ggplot(train_data_long, aes(x=value)) +
+  geom_histogram(bins=10, fill="skyblue", color="black") +
+  facet_wrap(~variable, scales="free_x") +
+  theme_minimal() +
+  labs(x="Value", y="Frequency")
+
+#分类变量
+categorical_variables <- c("Gender", "Ethnicity", "EducationLevel", "Smoking", "FamilyHistoryAlzheimers", "Depression", "MemoryComplaints", "BehavioralProblems", "Confusion", "Disorientation", "PersonalityChanges", "DifficultyCompletingTasks", "Forgetfulness", "Diagnosis")
+
+train_data_long_categorical <- melt(new_data, measure.vars = categorical_variables)
+
+ggplot(train_data_long_categorical, aes(x=value)) +
+  geom_bar(fill="skyblue", color="black") +
+  facet_wrap(~variable, scales="free_x") +
+  theme_minimal() +
+  labs(x="Category", y="Frequency")
+
+```
+
+
+
+```{r}
+#可以画一些boxplot来体现变量之间的关系
+ggplot(new_data, aes(x=Diagnosis, y=Age, fill=Gender)) +
+  geom_boxplot() +
+  theme_minimal() +
+  labs(x="Diagnosis", y="Age", fill="Gender")
+
+```
+
+```{r}
+#要不要写写test data的summary table和plots？
+#要的话复制粘贴train的就行
+
+```
+
+## Feature Selection
+
+#lasso
+```{r}
+install.packages("glmnet")
+library(glmnet)
+X <- new_data[, c("Age", "Gender", "Ethnicity", "EducationLevel", "BMI", 
+              "Smoking", "AlcoholConsumption", "PhysicalActivity", "DietQuality", 
+              "SleepQuality", "FamilyHistoryAlzheimers", "Depression", "CholesterolTotal", 
+              "CholesterolLDL", "MMSE", "FunctionalAssessment", "MemoryComplaints", 
+              "BehavioralProblems", "ADL", "Confusion", "Disorientation", 
+              "PersonalityChanges", "DifficultyCompletingTasks", "Forgetfulness")]
+
+y <- new_data$Diagnosis
+X <- scale(X)
+
+lasso_model <- cv.glmnet(X, y, alpha = 1, family = "binomial")
+
+best_lambda <- lasso_model$lambda.min
+best_lambda
+
+lasso_coef <- coef(lasso_model, s = "lambda.min")
+lasso_coef
+```
+From the lasso, we find the best lambda is 0.007470476, and some of the features are viewed as insignificant to the diagnosis. And the lasso model is Diagnosis ~ Gender + Ethnicity + Smoking + SleepQuality + MMSE + FunctionalAssessment + MemoryComplaints + BehavioralProblems + ADL + Confusion.
+
+```{r}
+library(MASS)
+library(dplyr)
+lassomodel <- glm(Diagnosis ~ Gender + Ethnicity + Smoking + SleepQuality + 
+             MMSE + FunctionalAssessment + MemoryComplaints + 
+             BehavioralProblems + ADL + Confusion, 
+             data = new_data, family = "binomial")
+
+summary(lassomodel)
+
+#AIC&BIC
+m_aic <- stepAIC(lassomodel, direction = "both",race = TRUE)
+summary(m_aic)
+
+m_bic <- stepAIC(lassomodel, direction = "both",race = TRUE, citation = "BIC")
+summary(m_bic)
+
+```
+
+
+
+
+
+
+full model: Age, Gender, MMSE, ADL, FunctionalAssessment, MemoryComplaints, BehaviorProblems, 
+
+#chi-square test对分类变量&Pearson correlation对连续变量
+```{r}
+#chisq test
+chisq_results <- list()
+for (var in categorical_variables) {
+  tbl <- table(new_data[[var]], new_data$Diagnosis)
+  chisq_test <- chisq.test(tbl)
+  chisq_results[[var]] <- chisq_test$p.value
+}
+chisq_results_df <- data.frame(Variable = names(chisq_results), P_Value = unlist(chisq_results))
+chisq_results_df
+
+#Pearson correlation
+cor_results <- list()
+for (var in continuous_variables) {
+  cor_value <- cor(new_data[[var]], new_data$Diagnosis, use = "complete.obs", method = "pearson")
+  cor_results[[var]] <- cor_value
+}
+cor_results_df <- data.frame(Variable = names(cor_results), Correlation = unlist(cor_results))
+cor_results_df
+```
+
+
+
+
+
+```{r}
+#full model
+library(MASS)
+library(dplyr)
+
+m1 = lm(Diagnosis ~ PatientID + Age + Gender + Ethnicity + EducationLevel + BMI + Smoking + AlcoholConsumption + PhysicalActivity + DietQuality + SleepQuality + FamilyHistoryAlzheimers + Depression + CholesterolTotal + CholesterolLDL + MMSE + FunctionalAssessment + MemoryComplaints + BehavioralProblems + ADL + Confusion + Disorientation + PersonalityChanges + DifficultyCompletingTasks + Forgetfulness)
+summary(m1)
+
+```
+
+Based on our interest and associated articles support, we would remove some features and get model 2.
+
+```{r}
+m2 = lm(Diagnosis ~ Age + Gender + BMI + Smoking + AlcoholConsumption + PhysicalActivity + DietQuality + SleepQuality + FamilyHistoryAlzheimers + Depression +  CholesterolLDL + MMSE + FunctionalAssessment + MemoryComplaints + BehavioralProblems + ADL + Confusion + Disorientation + PersonalityChanges + DifficultyCompletingTasks + Forgetfulness)
+summary(m2)
+
+#AIC
+m3 <- stepAIC(m2, direction = "both",race = TRUE)
+summary(m3)
+
+#BIC
+m4 <- stepAIC(m2, direction = "both",race = TRUE, citation = "BIC")
+summary(m4)
+
+```
+
+
+
+
+
+
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+
+```{r pressure, echo=FALSE}
+
+```
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
